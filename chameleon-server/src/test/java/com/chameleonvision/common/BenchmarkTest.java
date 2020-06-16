@@ -8,12 +8,17 @@ import com.chameleonvision.common.vision.frame.provider.FileFrameProvider;
 import com.chameleonvision.common.vision.opencv.CVMat;
 import com.chameleonvision.common.vision.opencv.ContourGroupingMode;
 import com.chameleonvision.common.vision.opencv.ContourIntersectionDirection;
+import com.chameleonvision.common.vision.pipe.impl.GPUAcceleratedHSVPipe;
+import com.chameleonvision.common.vision.pipe.impl.HSVPipe;
 import com.chameleonvision.common.vision.pipeline.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.opencv.core.Scalar;
+import org.opencv.imgcodecs.Imgcodecs;
 
 /** Various tests that check performance on long-running tasks (i.e. a pipeline) */
 public class BenchmarkTest {
@@ -96,6 +101,33 @@ public class BenchmarkTest {
                         TestUtils.WPI2019Image.FOV);
 
         frameProvider.setImageReloading(true);
+
+        benchmarkPipeline(frameProvider, pipeline, 5);
+    }
+
+    @Test
+    public void ReflectiveGPU1920x1440Benchmark() {
+        // Uncomment to run on a single frame
+//        var pipe = new GPUAcceleratedHSVPipe();
+//        pipe.setParams(new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.75), new Scalar(0.45, 1.0, 1.0)));
+//        var mat = pipe.apply(Imgcodecs.imread("/home/declan/Documents/target.jpg")).result;
+//        Imgcodecs.imwrite("i2.png", mat);
+
+        var pipeline = new ReflectivePipeline();
+        pipeline.getSettings().hsvHue.set(60, 100);
+        pipeline.getSettings().hsvSaturation.set(100, 255);
+        pipeline.getSettings().hsvValue.set(190, 255);
+        pipeline.getSettings().outputShowThresholded = true;
+        pipeline.getSettings().outputShowMultipleTargets = true;
+        pipeline.getSettings().contourGroupingMode = ContourGroupingMode.Dual;
+        pipeline.getSettings().contourIntersection = ContourIntersectionDirection.Up;
+
+        var frameProvider =
+                new FileFrameProvider(
+                        TestUtils.getWPIImagePath(TestUtils.WPI2019Image.kCargoStraightDark72in_HighRes),
+                        TestUtils.WPI2019Image.FOV);
+
+        frameProvider.setImageReloading(false);
 
         benchmarkPipeline(frameProvider, pipeline, 5);
     }

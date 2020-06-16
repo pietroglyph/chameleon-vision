@@ -22,6 +22,7 @@ repositories {
 }
 ext {
     wpilibVersion = '2020.2.2'
+    joglVersion = '2.3.1'
     openCVVersion = '3.4.7-2'
 }
 
@@ -40,6 +41,21 @@ dependencies {
     implementation group: 'commons-io', name: 'commons-io', version: '2.6'
     implementation "org.apache.commons:commons-collections4:4.4"
     implementation "org.apache.commons:commons-exec:1.3"
+
+    implementation "org.jogamp.gluegen:gluegen-rt:$joglVersion"
+    implementation "org.jogamp.jogl:jogl-all:$joglVersion"
+
+    runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-linux-amd64"
+    runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-linux-armv6"
+    runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-linux-armv6hf"
+    runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-macosx-universal"
+    runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-windows-amd64"
+
+    runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-linux-amd64"
+    runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-linux-armv6"
+    runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-linux-armv6hf"
+    runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-macosx-universal"
+    runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-windows-amd64"
 
     // wpilib stuff
     implementation "edu.wpi.first.wpiutil:wpiutil-java:$wpilibVersion"
