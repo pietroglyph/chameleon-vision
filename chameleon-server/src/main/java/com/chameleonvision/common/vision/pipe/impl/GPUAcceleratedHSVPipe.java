@@ -38,7 +38,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "uniform vec2 resolution;",
           "uniform sampler2D texture0;",
           "",
-          "layout(location = FRAG_COLOR) out vec3 fragColor;",
+          "layout(location = FRAG_COLOR) out float fragColor;",
           "",
           "vec3 rgb2hsv(vec3 c) {",
           "  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);",
@@ -60,7 +60,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "  vec2 uv = gl_FragCoord.xy/resolution;",
           // Important! We do this .bgr swizzle because the image comes in as BGR but we pretend it's RGB for convenience+speed
           "  vec3 col = texture(texture0, uv).bgr;",
-          "  fragColor = inRange(rgb2hsv(col)) ? vec3(1.0, 0, 0) : vec3(0.0, 0, 0);",
+          "  fragColor = inRange(rgb2hsv(col)) ? 1.0 : 0.0;",
           "}"
   );
   private static final int k_startingWidth = 640, k_startingHeight = 480;
@@ -283,7 +283,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
 
     // Load our image into the texture
     in.get(0, 0, inputBytes);
-    if (pboMode == PBOMode.NONE || 1 == 1) {
+    if (pboMode == PBOMode.NONE || true) {
       ByteBuffer buf = ByteBuffer.wrap(inputBytes);
       // (We're actually taking in BGR even though this says RGB; it's much easier and faster to switch it around in the fragment shader)
       texture.updateImage(gl, new TextureData(profile, GL2ES2.GL_RGB8, in.width(), in.height(), 0, GL2ES2.GL_RGB, GL2ES2.GL_UNSIGNED_BYTE, false, false, false, buf, null));
