@@ -108,11 +108,15 @@ public class BenchmarkTest {
     @Test
     public void ReflectiveGPU1920x1440Benchmark() {
         // Uncomment to run on a single frame
-//        var pipe = new GPUAcceleratedHSVPipe(GPUAcceleratedHSVPipe.PBOMode.SINGLE_BUFFERED);
-//        pipe.setParams(new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0)));
-//        var path = TestUtils.getWPIImagePath(TestUtils.WPI2019Image.kCargoStraightDark72in_HighRes);
+//        var pipe = new GPUAcceleratedHSVPipe(GPUAcceleratedHSVPipe.PBOMode.DOUBLE_BUFFERED);
+//        pipe.setParams(new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))); // new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))
+//        var path = TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_060in_Center);
 //        var mat = pipe.apply(Imgcodecs.imread(path.toString())).result;
 //        Imgcodecs.imwrite("i2.png", mat);
+//        mat = pipe.saveImage();//pipe.apply(Imgcodecs.imread("/home/declan/Documents/target.jpg")).result;
+//        Imgcodecs.imwrite("i3.png", mat);
+//        mat = pipe.saveImage();//pipe.apply(Imgcodecs.imread("/home/declan/Documents/target.jpg")).result;
+//        Imgcodecs.imwrite("i4.png", mat);
 
         var pipeline = new ReflectivePipeline();
         pipeline.getSettings().hsvHue.set(60, 100);
@@ -125,12 +129,12 @@ public class BenchmarkTest {
 
         var frameProvider =
                 new FileFrameProvider(
-                        TestUtils.getWPIImagePath(TestUtils.WPI2019Image.kCargoStraightDark72in_HighRes),
+                        TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_060in_Center),
                         TestUtils.WPI2019Image.FOV);
 
         frameProvider.setImageReloading(true);
 
-        benchmarkPipeline(frameProvider, pipeline, 5);
+        benchmarkPipeline(frameProvider, pipeline, 20);
     }
 
     private static <P extends CVPipeline> void benchmarkPipeline(

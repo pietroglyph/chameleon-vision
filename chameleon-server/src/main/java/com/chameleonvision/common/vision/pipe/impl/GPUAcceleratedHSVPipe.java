@@ -63,7 +63,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "  fragColor = inRange(rgb2hsv(col)) ? vec3(1.0, 0, 0) : vec3(0.0, 0, 0);",
           "}"
   );
-  private static final int k_startingWidth = 1920, k_startingHeight = 1440;
+  private static final int k_startingWidth = 640, k_startingHeight = 480;
   private static final float[] k_vertexPositions = {
         // Set up a quad that covers the screen
         -1f, +1f,
@@ -79,7 +79,10 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     DOUBLE_BUFFERED
   }
 
-  private final IntBuffer vertexVBOIds = GLBuffers.newDirectIntBuffer(1), m_unpackPBOIds = GLBuffers.newDirectIntBuffer(2), m_packPBOIds = GLBuffers.newDirectIntBuffer(2);
+  private final IntBuffer
+          vertexVBOIds = GLBuffers.newDirectIntBuffer(1),
+          unpackPBOIds = GLBuffers.newDirectIntBuffer(2),
+          packPBOIds = GLBuffers.newDirectIntBuffer(2);
 
   private final GL2ES2 gl;
   private final GLProfile profile;
@@ -93,10 +96,12 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
 
   private final Logger logger = new Logger(GPUAcceleratedHSVPipe.class, LogGroup.General);
 
-  private byte[] outputBytes;
+  private byte[] inputBytes, outputBytes;
   private Mat outputMat = new Mat(k_startingHeight, k_startingWidth, CvType.CV_8UC1);
   private int previousWidth = -1, previousHeight = -1;
-  private int unpackIndex = 0, unpackNextIndex = 0, packIndex = 0, packNextIndex = 0;
+  private int
+          unpackIndex = 0, unpackNextIndex = 0,
+          packIndex = 0, packNextIndex = 0;
 
   public GPUAcceleratedHSVPipe(PBOMode pboMode) {
     this.pboMode = pboMode;
@@ -122,7 +127,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl = pboMode == PBOMode.NONE ? drawable.getGL().getGL2ES2() : drawable.getGL().getGL4ES3();
     final int programId = gl.glCreateProgram();
 
-    logger.debug("Creating OpenGL context with renderer '" + gl.glGetString(GL.GL_RENDERER) + "'");
+    logger.debug("Created an OpenGL context with renderer '" + gl.glGetString(GL.GL_RENDERER) + "'");
 
     // Compile and setup our two shaders with our program
     final int vertexId = createShader(gl, programId, k_vertexShader, GL2ES2.GL_VERTEX_SHADER);
@@ -179,23 +184,26 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glBufferData(GL2ES2.GL_ARRAY_BUFFER, vertexBuffer.capacity() * Float.BYTES, vertexBuffer, GL2ES2.GL_STATIC_DRAW);
 
     // Set up pixel unpack buffer (a PBO to transfer image data to the GPU)
-//    gl.glGenBuffers(2, m_unpackPBOIds);
-//
-//    ByteBuffer unpackBuffer = GLBuffers.newDirectByteBuffer(k_startingHeight * k_startingWidth * 3);
-//    gl.glBindBuffer(GL2ES2.GL_PIXEL_UNPACK_BUFFER, m_unpackPBOIds.get(0));
-//    gl.glBufferData(GL2ES2.GL_PIXEL_UNPACK_BUFFER, k_startingHeight * k_startingWidth * 3, unpackBuffer, GL2ES2.GL_STREAM_DRAW);
-//    gl.glBindBuffer(GL2ES2.GL_PIXEL_UNPACK_BUFFER, m_unpackPBOIds.get(1));
-//    gl.glBufferData(GL2ES2.GL_PIXEL_UNPACK_BUFFER, k_startingHeight * k_startingWidth * 3, unpackBuffer, GL2ES2.GL_STREAM_DRAW);
-//    gl.glBindBuffer(GL2ES2.GL_PIXEL_UNPACK_BUFFER, 0);
+    if (pboMode != PBOMode.NONE) {
+      gl.glGenBuffers(2, unpackPBOIds);
+
+      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(0));
+      gl.glBufferData(GL4ES3.GL_PIXEL_UNPACK_BUFFER, k_startingHeight * k_startingWidth * 3, null, GL4ES3.GL_STREAM_DRAW);
+      if (pboMode == PBOMode.DOUBLE_BUFFERED) {
+        gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(1));
+        gl.glBufferData(GL4ES3.GL_PIXEL_UNPACK_BUFFER, k_startingHeight * k_startingWidth * 3, null, GL4ES3.GL_STREAM_DRAW);
+      }
+      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, 0);
+    }
 
     // Set up pixel pack buffer (a PBO to transfer the processed image back from the GPU)
     if (pboMode != PBOMode.NONE) {
-      gl.glGenBuffers(2, m_packPBOIds);
+      gl.glGenBuffers(2, packPBOIds);
 
-      gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, m_packPBOIds.get(0));
+      gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(0));
       gl.glBufferData(GL4ES3.GL_PIXEL_PACK_BUFFER, k_startingHeight * k_startingWidth, null, GL4ES3.GL_STREAM_READ);
       if (pboMode == PBOMode.DOUBLE_BUFFERED) {
-        gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, m_packPBOIds.get(1));
+        gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(1));
         gl.glBufferData(GL4ES3.GL_PIXEL_PACK_BUFFER, k_startingHeight * k_startingWidth, null, GL4ES3.GL_STREAM_READ);
       }
       gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, 0);
@@ -234,31 +242,74 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
   @Override
   protected Mat process(Mat in) {
     if (in.width() != previousWidth && in.height() != previousHeight) {
+      logger.debug("Resizing OpenGL viewport, byte buffers, and PBOs");
+
       drawable.setSurfaceSize(in.width(), in.height());
       gl.glViewport(0, 0, in.width(), in.height());
 
       previousWidth = in.width();
       previousHeight = in.height();
 
-      outputBytes = new byte[in.width() * in.height()];
+      inputBytes = new byte[in.width() * in.height() * 3];
 
-      logger.debug("Resizing OpenGL viewport");
+      outputBytes = new byte[in.width() * in.height()];
+      outputMat = new Mat(k_startingHeight, k_startingWidth, CvType.CV_8UC1);
+
+      if (pboMode != PBOMode.NONE) {
+        gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(0));
+        gl.glBufferData(GL4ES3.GL_PIXEL_PACK_BUFFER, in.width() * in.height(), null, GL4ES3.GL_STREAM_READ);
+
+        if (pboMode == PBOMode.DOUBLE_BUFFERED) {
+          gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(1));
+          gl.glBufferData(GL4ES3.GL_PIXEL_PACK_BUFFER, in.width() * in.height(), null, GL4ES3.GL_STREAM_READ);
+        }
+      }
     }
-    // We're actually taking in BGR, but it's much easier and faster to switch it around in the fragment shader
-    byte[] bytesTemp = new byte[in.channels() * in.cols() * in.rows()];
-    in.get(0, 0, bytesTemp);
-    ByteBuffer buf = ByteBuffer.wrap(bytesTemp);
-    texture.updateImage(gl, new TextureData(profile, GL2ES2.GL_RGB8, in.width(), in.height(), 0, GL2ES2.GL_RGB, GL2ES2.GL_UNSIGNED_BYTE, false, false, false, buf, null));
+
+    if (pboMode == PBOMode.DOUBLE_BUFFERED) {
+      unpackIndex = (unpackIndex + 1) % 2;
+      unpackNextIndex = (unpackIndex + 1) % 2;
+    }
 
     // Reset the fullscreen quad
     gl.glBindBuffer(GL2ES2.GL_ARRAY_BUFFER, vertexVBOIds.get(0));
     gl.glEnableVertexAttribArray(k_positionVertexAttribute);
     gl.glVertexAttribPointer(0, 2, GL2ES2.GL_FLOAT, false, 0, 0);
 
-    // Load in our image as a texture
+    // Load and bind our image as a 2D texture
     gl.glActiveTexture(GL2ES2.GL_TEXTURE0);
     texture.enable(gl);
     texture.bind(gl);
+
+    // Load our image into the texture
+    in.get(0, 0, inputBytes);
+    if (pboMode == PBOMode.NONE || 1 == 1) {
+      ByteBuffer buf = ByteBuffer.wrap(inputBytes);
+      // (We're actually taking in BGR even though this says RGB; it's much easier and faster to switch it around in the fragment shader)
+      texture.updateImage(gl, new TextureData(profile, GL2ES2.GL_RGB8, in.width(), in.height(), 0, GL2ES2.GL_RGB, GL2ES2.GL_UNSIGNED_BYTE, false, false, false, buf, null));
+    } else {
+      // Bind the PBO to the texture
+      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(unpackIndex));
+
+      // Copy pixels from the PBO to the texture object
+      gl.glTexSubImage2D(GL4ES3.GL_TEXTURE_2D, 0, 0, 0, in.width(), in.height(), GL4ES3.GL_RGB8, GL4ES3.GL_UNSIGNED_BYTE, 0);
+
+      // Bind (potentially) another PBO to update the texture source
+      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(unpackNextIndex));
+
+      // This call with a nullptr for the data arg tells OpenGL *not* to wait to be in sync with the GPU
+      // This causes the previous data in the PBO to be discarded
+      gl.glBufferData(GL4ES3.GL_PIXEL_UNPACK_BUFFER, in.width() * in.height() * 3, null, GL4ES3.GL_STREAM_DRAW);
+
+      // Map the a buffer of GPU memory into a place that's accessible by us
+      var buf = gl.glMapBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, GL4ES3.GL_WRITE_ONLY);
+      buf.put(inputBytes);
+
+      gl.glUnmapBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER);
+      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, 0);
+    }
+
+    // Set up a uniform holding our image as a texture
     gl.glUniform1i(textureUniformId, 0);
 
     // Set up a uniform holding the image resolution
@@ -305,14 +356,14 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glReadBuffer(GL4ES3.GL_FRONT);
 
     // Read pixels from the framebuffer to the PBO
-    gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, m_packPBOIds.get(packIndex));
+    gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packIndex));
     // We use GL_RED to get things in a single-channel format
     // Note that which pixel format you use is *very* important to performance
     // E.g. GL_LUMINANCE is super slow in this case
     gl.glReadPixels(0, 0, width, height, GL4ES3.GL_RED, GL4ES3.GL_UNSIGNED_BYTE, 0);
 
     // Map the PBO into the CPU's memory
-    gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, m_packPBOIds.get(packNextIndex));
+    gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packNextIndex));
     var buf = gl.glMapBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, GL4ES3.GL_READ_ONLY);
     buf.get(outputBytes);
     outputMat.put(0, 0, outputBytes);
