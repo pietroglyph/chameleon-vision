@@ -110,7 +110,7 @@ public class BenchmarkTest {
         // Uncomment to run on a single frame
 //        var pipe = new GPUAcceleratedHSVPipe(GPUAcceleratedHSVPipe.PBOMode.SINGLE_BUFFERED);
 //        pipe.setParams(new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))); // new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))
-//        var path = TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_060in_Center);
+//        var path = TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p);
 //        var mat = pipe.apply(Imgcodecs.imread(path.toString())).result;
 //        Imgcodecs.imwrite("i2.png", mat);
 //        mat = pipe.saveImage();//pipe.apply(Imgcodecs.imread("/home/declan/Documents/target.jpg")).result;
@@ -129,7 +129,7 @@ public class BenchmarkTest {
 
         var frameProvider =
                 new FileFrameProvider(
-                        TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_060in_Center),
+                        TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p),
                         TestUtils.WPI2019Image.FOV);
 
         frameProvider.setImageReloading(true);

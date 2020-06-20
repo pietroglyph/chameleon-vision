@@ -3,6 +3,7 @@ package com.chameleonvision.common.vision.pipe.impl;
 import com.chameleonvision.common.logging.LogGroup;
 import com.chameleonvision.common.logging.Logger;
 import com.chameleonvision.common.vision.pipe.CVPipe;
+import com.jogamp.newt.opengl.GLWindow;
 import com.jogamp.opengl.*;
 import com.jogamp.opengl.util.GLBuffers;
 import com.jogamp.opengl.util.texture.Texture;
@@ -59,7 +60,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "  gl_FragColor = inRange(rgb2hsv(col)) ? vec4(1.0, 0.0, 0.0, 0.0) : vec4(0.0, 0.0, 0.0, 0.0);",
           "}"
   );
-  private static final int k_startingWidth = 640, k_startingHeight = 480;
+  private static final int k_startingWidth = 1280, k_startingHeight = 720;
   private static final float[] k_vertexPositions = {
         // Set up a quad that covers the screen
         -1f, +1f,
@@ -103,7 +104,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     this.pboMode = pboMode;
 
     // Set up GL profile and ask for specific capabilities
-    profile = GLProfile.get(pboMode == PBOMode.NONE ? GLProfile.GL2ES2 : GLProfile.GL4ES3);
+    profile = GLProfile.get(pboMode == PBOMode.NONE ? GLProfile.GLES2 : GLProfile.GLES2);
     final var capabilities = new GLCapabilities(profile);
     capabilities.setHardwareAccelerated(true);
     capabilities.setDoubleBuffered(false);
@@ -111,7 +112,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     capabilities.setRedBits(8);
     capabilities.setBlueBits(8);
     capabilities.setGreenBits(8);
-    capabilities.setAlphaBits(8);
+    capabilities.setAlphaBits(0);
 
     // Set up the offscreen area we're going to draw to
     final var factory = GLDrawableFactory.getFactory(profile);
@@ -119,11 +120,22 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     drawable.display();
     drawable.getContext().makeCurrent();
 
+    var sb = new StringBuilder();
+    JoglVersion.getDefaultOpenGLInfo(factory.getDefaultDevice(), sb, true);
+    System.out.println(sb.toString());
+
     // Get an OpenGL context; OpenGL ES 2.0 and OpenGL 2.0 are compatible with all the coprocs we care about but not compatible with PBOs. Open GL ES 3.0 and OpenGL 4.0 are compatible with select coprocs *and* PBOs
-    gl = pboMode == PBOMode.NONE ? drawable.getGL().getGL2ES2() : drawable.getGL().getGL4ES3();
+    gl = pboMode == PBOMode.NONE ? drawable.getGL().getGLES2() : drawable.getGL().getGLES3();
     final int programId = gl.glCreateProgram();
 
-    logger.debug("Created an OpenGL context with renderer '" + gl.glGetString(GL.GL_RENDERER) + "'");
+    logger.info("Created an OpenGL context with renderer '" + gl.glGetString(GL.GL_RENDERER) + "', version '" + gl.glGetString(GL.GL_VERSION) + "', and profile '" + profile.toString() + "'");
+
+    var fmt = GLBuffers.newDirectIntBuffer(1);
+    gl.glGetIntegerv(GL4ES3.GL_IMPLEMENTATION_COLOR_READ_FORMAT, fmt);
+    var type = GLBuffers.newDirectIntBuffer(1);
+    gl.glGetIntegerv(GL4ES3.GL_IMPLEMENTATION_COLOR_READ_TYPE, type);
+
+    logger.info("GL_IMPLEMENTATION_COLOR_READ_FORMAT: " + fmt.get(0) + ", GL_IMPLEMENTATION_COLOR_READ_TYPE: " + type.get(0));
 
     // Tell OpenGL that the attribute in the vertex shader named position is bound to index 0 (the index for the generic position input)
     gl.glBindAttribLocation(programId, 0, "position");
@@ -331,7 +343,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     if (pboMode == PBOMode.NONE) {
       return saveMatNoPBO(gl, in.width(), in.height());
     } else {
-      return saveMatPBO((GL4ES3) gl, in.width(), in.height(), pboMode == PBOMode.DOUBLE_BUFFERED);
+      return saveMatPBO(new DebugGLES3((GLES3) gl), in.width(), in.height(), pboMode == PBOMode.DOUBLE_BUFFERED);
     }
   }
 
@@ -352,13 +364,14 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     }
 
     // Set the target framebuffer to read
-    gl.glReadBuffer(GL4ES3.GL_FRONT);
+//    gl.glReadBuffer(GL4ES3.GL_FRONT);
 
     // Read pixels from the framebuffer to the PBO
     gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packIndex));
     // We use GL_RED to get things in a single-channel format
     // Note that which pixel format you use is *very* important to performance
     // E.g. GL_LUMINANCE is super slow in this case
+    // TODO: GL_RED + GL_UNSIGNED_BYTE may not be supported on most OpenGL ES 3.0 implementations
     gl.glReadPixels(0, 0, width, height, GL4ES3.GL_RED, GL4ES3.GL_UNSIGNED_BYTE, 0);
 
     // Map the PBO into the CPU's memory
