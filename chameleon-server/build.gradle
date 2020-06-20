@@ -17,12 +17,15 @@ sourceCompatibility = 11
 repositories {
     mavenCentral()
     maven {
+        url = "file:///home/declan/work/src/github.com/pietroglyph/chameleon-vision/chameleon-server/repo"
+    }
+    maven {
         url = 'https://frcmaven.wpi.edu:443/artifactory/release'
     }
 }
 ext {
     wpilibVersion = '2020.2.2'
-    joglVersion = '2.3.1'
+    joglVersion = '2.4.0-rc-20200307'
     openCVVersion = '3.4.7-2'
 }
 
@@ -48,12 +51,14 @@ dependencies {
     runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-linux-amd64"
     runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-linux-armv6"
     runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-linux-armv6hf"
+    runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-linux-aarch64"
     runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-macosx-universal"
     runtime "org.jogamp.gluegen:gluegen-rt:$joglVersion:natives-windows-amd64"
 
     runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-linux-amd64"
     runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-linux-armv6"
     runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-linux-armv6hf"
+    runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-linux-aarch64"
     runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-macosx-universal"
     runtime "org.jogamp.jogl:jogl-all:$joglVersion:natives-windows-amd64"
 
