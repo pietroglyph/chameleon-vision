@@ -16,19 +16,16 @@ import java.nio.IntBuffer;
 public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
 
   private static final String k_vertexShader = String.join("\n",
-          "#version 320 es",
-          "#define POSITION 0",
+          "#version 100",
           "",
-          "layout(location = POSITION) in vec4 position;",
+          "attribute vec4 position;",
           "",
           "void main() {",
           "  gl_Position = position;",
           "}"
   );
   private static final String k_fragmentShader = String.join("\n",
-          "#version 320 es",
-          "#define FRAG_COLOR 0",
-          "#define FRAG_COORD 1",
+          "#version 100",
           "",
           "precision highp float;",
           "precision highp int;",
@@ -37,8 +34,6 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "uniform vec3 upperThresh;",
           "uniform vec2 resolution;",
           "uniform sampler2D texture0;",
-          "",
-          "layout(location = FRAG_COLOR) out float fragColor;",
           "",
           "vec3 rgb2hsv(vec3 c) {",
           "  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);",
@@ -59,8 +54,9 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "void main() {",
           "  vec2 uv = gl_FragCoord.xy/resolution;",
           // Important! We do this .bgr swizzle because the image comes in as BGR but we pretend it's RGB for convenience+speed
-          "  vec3 col = texture(texture0, uv).bgr;",
-          "  fragColor = inRange(rgb2hsv(col)) ? 1.0 : 0.0;",
+          "  vec3 col = texture2D(texture0, uv).bgr;",
+          // Only the first value in the vec4 gets used
+          "  gl_FragColor = inRange(rgb2hsv(col)) ? vec4(1.0, 0.0, 0.0, 0.0) : vec4(0.0, 0.0, 0.0, 0.0);",
           "}"
   );
   private static final int k_startingWidth = 640, k_startingHeight = 480;
@@ -128,6 +124,9 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     final int programId = gl.glCreateProgram();
 
     logger.debug("Created an OpenGL context with renderer '" + gl.glGetString(GL.GL_RENDERER) + "'");
+
+    // Tell OpenGL that the attribute in the vertex shader named position is bound to index 0 (the index for the generic position input)
+    gl.glBindAttribLocation(programId, 0, "position");
 
     // Compile and setup our two shaders with our program
     final int vertexId = createShader(gl, programId, k_vertexShader, GL2ES2.GL_VERTEX_SHADER);
