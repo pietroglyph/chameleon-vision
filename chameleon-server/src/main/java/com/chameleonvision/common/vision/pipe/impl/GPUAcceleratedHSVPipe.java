@@ -60,7 +60,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           // Important! We do this .bgr swizzle because the image comes in as BGR but we pretend it's RGB for convenience+speed
           "  vec3 col = texture2D(texture0, uv).bgr;",
           // Only the first value in the vec4 gets used
-          "  gl_FragColor = inRange(rgb2hsv(col)) ? vec4(1.0, 0.0, 0.0, 0.0) : vec4(0.0, 0.0, 0.0, 0.0);",
+          "  gl_FragColor = inRange(rgb2hsv(col)) ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 0.0, 0.0);",
           "}"
   );
   private static final int k_startingWidth = 1280, k_startingHeight = 720;
@@ -86,6 +86,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
 
   private final GLES2 gl;
   private final GLProfile profile;
+  private final int outputFormat;
   private final PBOMode pboMode;
   private final GLOffscreenAutoDrawableImpl.FBOImpl drawable;
   private final Texture texture;
@@ -133,7 +134,10 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     final int programId = gl.glCreateProgram();
 
     if (pboMode == PBOMode.NONE && !gl.glGetString(GL_EXTENSIONS).contains("GL_EXT_texture_rg")) {
-      throw new RuntimeException("OpenGL ES 2.0 implementation does not have the required 'GL_EXT_texture_rg' extension");
+      logger.warn("OpenGL ES 2.0 implementation does not have the 'GL_EXT_texture_rg' extension, falling back to GL_ALPHA instead of GL_RED output format");
+      outputFormat = GL_ALPHA;
+    } else {
+      outputFormat = GL_RED;
     }
 
     // JOGL creates a framebuffer color attachment that has RGB set as the format, which is not appropriate for us because we want a single-channel format
@@ -146,7 +150,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     var colorBufferIds = GLBuffers.newDirectIntBuffer(1);
     gl.glGenTextures(1, colorBufferIds);
     gl.glBindTexture(GL_TEXTURE_2D, colorBufferIds.get(0));
-    gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, k_startingWidth, k_startingHeight, 0, GL_RED, GL_UNSIGNED_BYTE, null);
+    gl.glTexImage2D(GL_TEXTURE_2D, 0, outputFormat == GL_RED ? GL_R8 : GL_ALPHA8, k_startingWidth, k_startingHeight, 0, outputFormat, GL_UNSIGNED_BYTE, null);
     gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     // Attach the texture to the framebuffer
@@ -377,12 +381,12 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     }
   }
 
-  private static Mat saveMatNoPBO(GLES2 gl, int width, int height) {
+  private Mat saveMatNoPBO(GLES2 gl, int width, int height) {
     ByteBuffer buffer = GLBuffers.newDirectByteBuffer(width * height);
-    // We use GL_RED to get things in a single-channel format
+    // We use GL_RED/GL_ALPHA to get things in a single-channel format
     // Note that which pixel format you use is *very* important to performance
     // E.g. GL_LUMINANCE is super slow in this case
-    gl.glReadPixels(0, 0, width, height, GL_RED, GL_UNSIGNED_BYTE, buffer);
+    gl.glReadPixels(0, 0, width, height, outputFormat, GL_UNSIGNED_BYTE, buffer);
 
     return new Mat(height, width, CvType.CV_8UC1, buffer);
   }
@@ -398,10 +402,9 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
 
     // Read pixels from the framebuffer to the PBO
     gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packIndex));
-    // We use GL_RED to get things in a single-channel format
+    // We use GL_RED (which is always supported in GLES3) to get things in a single-channel format
     // Note that which pixel format you use is *very* important to performance
     // E.g. GL_LUMINANCE is super slow in this case
-    // TODO: GL_RED + GL_UNSIGNED_BYTE may not be supported on most OpenGL ES 3.0 implementations
     gl.glReadPixels(0, 0, width, height, GLES3.GL_RED, GLES3.GL_UNSIGNED_BYTE, 0);
 
     // Map the PBO into the CPU's memory
