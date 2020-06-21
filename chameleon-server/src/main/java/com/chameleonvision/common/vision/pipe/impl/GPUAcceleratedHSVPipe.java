@@ -59,7 +59,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "  vec2 uv = gl_FragCoord.xy/resolution;",
           // Important! We do this .bgr swizzle because the image comes in as BGR but we pretend it's RGB for convenience+speed
           "  vec3 col = texture2D(texture0, uv).bgr;",
-          // Only the first value in the vec4 gets used
+          // Only the first value in the vec4 gets used for GL_RED, and only the last value gets used for GL_ALPHA
           "  gl_FragColor = inRange(rgb2hsv(col)) ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 0.0, 0.0);",
           "}"
   );
@@ -154,10 +154,19 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     // Attach the texture to the framebuffer
+    gl.glBindTexture(GL_TEXTURE_2D, 0);
     gl.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorBufferIds.get(0), 0);
     // Cleanup
     gl.glBindTexture(GL_TEXTURE_2D, 0);
     drawable.getFBObject(GL_FRONT).unbind(gl);
+
+    // Check that the FBO is attached
+    int fboStatus = gl.glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (fboStatus == GL_FRAMEBUFFER_UNSUPPORTED) {
+      throw new RuntimeException("GL implementation does not support rendering to internal format '" + String.format("0x%08X", outputFormat == GL_RED ? GL_R8 : GL_ALPHA8) + "' with type '" + String.format("0x%08X", GL_UNSIGNED_BYTE) + "'");
+    } else if (fboStatus != GL_FRAMEBUFFER_COMPLETE) {
+      throw new RuntimeException("Framebuffer is not complete; framebuffer status is " + String.format("0x%08X", fboStatus));
+    }
 
     logger.info("Created an OpenGL context with renderer '" + gl.glGetString(GL_RENDERER) + "', version '" + gl.glGetString(GL.GL_VERSION) + "', and profile '" + profile.toString() + "'");
 
@@ -204,12 +213,15 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glUseProgram(programId);
 
     // Set up our texture
-    textureUniformId = gl.glGetUniformLocation(programId, "texture0");
     texture = new Texture(GL_TEXTURE_2D);
     texture.setTexParameteri(gl, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     texture.setTexParameteri(gl, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     texture.setTexParameteri(gl, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     texture.setTexParameteri(gl, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // Set up a uniform holding our image as a texture
+    textureUniformId = gl.glGetUniformLocation(programId, "texture0");
+    gl.glUniform1i(textureUniformId, 0);
 
     // Set up a uniform to hold image resolution
     resolutionUniformId = gl.glGetUniformLocation(programId, "resolution");
@@ -237,9 +249,6 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
       }
       gl.glBindBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, 0);
     }
-
-    // Set up pixel pack alignment
-    gl.glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
     // Set up pixel pack buffer (a PBO to transfer the processed image back from the GPU)
     if (pboMode != PBOMode.NONE) {
@@ -320,6 +329,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glBindBuffer(GL_ARRAY_BUFFER, vertexVBOIds.get(0));
     gl.glEnableVertexAttribArray(k_positionVertexAttribute);
     gl.glVertexAttribPointer(0, 2, GL_FLOAT, false, 0, 0);
+    gl.glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     // Load and bind our image as a 2D texture
     gl.glActiveTexture(GL_TEXTURE0);
@@ -354,13 +364,10 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
       gl.glBindBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, 0);
     }
 
-    // Set up a uniform holding our image as a texture
-    gl.glUniform1i(textureUniformId, 0);
-
-    // Set up a uniform holding the image resolution
+    // Put values in a uniform holding the image resolution
     gl.glUniform2f(resolutionUniformId, in.width(), in.height());
 
-    // Set up threshold uniforms
+    // Put values in threshold uniforms
     var lowr = params.getHsvLower().val;
     var upr = params.getHsvUpper().val;
     gl.glUniform3f(lowerUniformId, (float) lowr[0], (float) lowr[1], (float) lowr[2]);
@@ -385,7 +392,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     ByteBuffer buffer = GLBuffers.newDirectByteBuffer(width * height);
     // We use GL_RED/GL_ALPHA to get things in a single-channel format
     // Note that which pixel format you use is *very* important to performance
-    // E.g. GL_LUMINANCE is super slow in this case
+    // E.g. GL_ALPHA is super slow in this case
     gl.glReadPixels(0, 0, width, height, outputFormat, GL_UNSIGNED_BYTE, buffer);
 
     return new Mat(height, width, CvType.CV_8UC1, buffer);
@@ -397,19 +404,19 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
       packNextIndex = (packIndex + 1) % 2;
     }
 
-    // Set the target framebuffer to read
-//    gl.glReadBuffer(GLES3.GL_FRONT);
+    // Set the target framebuffer attachment to read
+    gl.glReadBuffer(GLES3.GL_COLOR_ATTACHMENT0);
 
     // Read pixels from the framebuffer to the PBO
     gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packIndex));
     // We use GL_RED (which is always supported in GLES3) to get things in a single-channel format
     // Note that which pixel format you use is *very* important to performance
-    // E.g. GL_LUMINANCE is super slow in this case
+    // E.g. GL_ALPHA is super slow in this case
     gl.glReadPixels(0, 0, width, height, GLES3.GL_RED, GLES3.GL_UNSIGNED_BYTE, 0);
 
     // Map the PBO into the CPU's memory
     gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packNextIndex));
-    var buf = gl.glMapBuffer(GLES3.GL_PIXEL_PACK_BUFFER, GLES3.GL_READ_ONLY);
+    var buf = gl.glMapBufferRange(GLES3.GL_PIXEL_PACK_BUFFER, 0, width * height, GLES3.GL_MAP_READ_BIT);
     buf.get(outputBytes);
     outputMat.put(0, 0, outputBytes);
     gl.glUnmapBuffer(GLES3.GL_PIXEL_PACK_BUFFER);

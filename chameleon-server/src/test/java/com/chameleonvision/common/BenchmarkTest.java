@@ -108,33 +108,35 @@ public class BenchmarkTest {
     @Test
     public void ReflectiveGPU1920x1440Benchmark() {
         // Uncomment to run on a single frame
-//        var pipe = new GPUAcceleratedHSVPipe(GPUAcceleratedHSVPipe.PBOMode.NONE);
-//        pipe.setParams(new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))); // new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))
-//        var path = TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p);
-//        var mat = pipe.apply(Imgcodecs.imread(path.toString())).result;
-//        Imgcodecs.imwrite("i2.png", mat);
-//        mat = pipe.saveImage();//pipe.apply(Imgcodecs.imread("/home/declan/Documents/target.jpg")).result;
-//        Imgcodecs.imwrite("i3.png", mat);
-//        mat = pipe.saveImage();//pipe.apply(Imgcodecs.imread("/home/declan/Documents/target.jpg")).result;
-//        Imgcodecs.imwrite("i4.png", mat);
+        if (true) {
+            var pipe = new GPUAcceleratedHSVPipe(GPUAcceleratedHSVPipe.PBOMode.NONE);
+            pipe.setParams(new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))); // new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))
+            var path = TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p);
+            var mat = pipe.apply(Imgcodecs.imread(path.toString())).result;
+            Imgcodecs.imwrite("i2.png", mat);
+            mat = pipe.apply(Imgcodecs.imread(path.toString())).result;
+            Imgcodecs.imwrite("i3.png", mat);
+            mat = pipe.apply(Imgcodecs.imread(path.toString())).result;
+            Imgcodecs.imwrite("i4.png", mat);
+        } else {
+            var pipeline = new ReflectivePipeline();
+            pipeline.getSettings().hsvHue.set(60, 100);
+            pipeline.getSettings().hsvSaturation.set(100, 255);
+            pipeline.getSettings().hsvValue.set(190, 255);
+            pipeline.getSettings().outputShowThresholded = true;
+            pipeline.getSettings().outputShowMultipleTargets = true;
+            pipeline.getSettings().contourGroupingMode = ContourGroupingMode.Dual;
+            pipeline.getSettings().contourIntersection = ContourIntersectionDirection.Up;
 
-        var pipeline = new ReflectivePipeline();
-        pipeline.getSettings().hsvHue.set(60, 100);
-        pipeline.getSettings().hsvSaturation.set(100, 255);
-        pipeline.getSettings().hsvValue.set(190, 255);
-        pipeline.getSettings().outputShowThresholded = true;
-        pipeline.getSettings().outputShowMultipleTargets = true;
-        pipeline.getSettings().contourGroupingMode = ContourGroupingMode.Dual;
-        pipeline.getSettings().contourIntersection = ContourIntersectionDirection.Up;
+            var frameProvider =
+                    new FileFrameProvider(
+                            TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p),
+                            TestUtils.WPI2019Image.FOV);
 
-        var frameProvider =
-                new FileFrameProvider(
-                        TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p),
-                        TestUtils.WPI2019Image.FOV);
+            frameProvider.setImageReloading(true);
 
-        frameProvider.setImageReloading(true);
-
-        benchmarkPipeline(frameProvider, pipeline, 20);
+            benchmarkPipeline(frameProvider, pipeline, 20);
+        }
     }
 
     private static <P extends CVPipeline> void benchmarkPipeline(
