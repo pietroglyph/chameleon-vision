@@ -8,11 +8,14 @@ import com.jogamp.opengl.*;
 import com.jogamp.opengl.util.GLBuffers;
 import com.jogamp.opengl.util.texture.Texture;
 import com.jogamp.opengl.util.texture.TextureData;
+import jogamp.opengl.GLOffscreenAutoDrawableImpl;
 import org.opencv.core.*;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
+
+import static com.jogamp.opengl.GLES2.*;
 
 public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
 
@@ -81,10 +84,10 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           unpackPBOIds = GLBuffers.newDirectIntBuffer(2),
           packPBOIds = GLBuffers.newDirectIntBuffer(2);
 
-  private final GL2ES2 gl;
+  private final GLES2 gl;
   private final GLProfile profile;
   private final PBOMode pboMode;
-  private final GLOffscreenAutoDrawable drawable;
+  private final GLOffscreenAutoDrawableImpl.FBOImpl drawable;
   private final Texture texture;
   // The texture uniform holds the image that's being processed
   // The resolution uniform holds the current image resolution
@@ -104,19 +107,20 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     this.pboMode = pboMode;
 
     // Set up GL profile and ask for specific capabilities
-    profile = GLProfile.get(pboMode == PBOMode.NONE ? GLProfile.GLES2 : GLProfile.GLES2);
+    profile = GLProfile.get(pboMode == PBOMode.NONE ? GLProfile.GLES2 : GLProfile.GLES3);
     final var capabilities = new GLCapabilities(profile);
     capabilities.setHardwareAccelerated(true);
+    capabilities.setFBO(true);
     capabilities.setDoubleBuffered(false);
     capabilities.setOnscreen(false);
     capabilities.setRedBits(8);
-    capabilities.setBlueBits(8);
-    capabilities.setGreenBits(8);
+    capabilities.setBlueBits(0);
+    capabilities.setGreenBits(0);
     capabilities.setAlphaBits(0);
 
     // Set up the offscreen area we're going to draw to
     final var factory = GLDrawableFactory.getFactory(profile);
-    drawable = factory.createOffscreenAutoDrawable(factory.getDefaultDevice(), capabilities, new DefaultGLCapabilitiesChooser(), k_startingWidth, k_startingHeight);
+    drawable = (GLOffscreenAutoDrawableImpl.FBOImpl) factory.createOffscreenAutoDrawable(factory.getDefaultDevice(), capabilities, new DefaultGLCapabilitiesChooser(), k_startingWidth, k_startingHeight);
     drawable.display();
     drawable.getContext().makeCurrent();
 
@@ -128,12 +132,35 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl = pboMode == PBOMode.NONE ? drawable.getGL().getGLES2() : drawable.getGL().getGLES3();
     final int programId = gl.glCreateProgram();
 
-    logger.info("Created an OpenGL context with renderer '" + gl.glGetString(GL.GL_RENDERER) + "', version '" + gl.glGetString(GL.GL_VERSION) + "', and profile '" + profile.toString() + "'");
+    if (pboMode == PBOMode.NONE && !gl.glGetString(GL_EXTENSIONS).contains("GL_EXT_texture_rg")) {
+      throw new RuntimeException("OpenGL ES 2.0 implementation does not have the required 'GL_EXT_texture_rg' extension");
+    }
+
+    // JOGL creates a framebuffer color attachment that has RGB set as the format, which is not appropriate for us because we want a single-channel format
+    // We make ourown FBO color attachment to remedy this
+    // Detach and destroy the FBO color attachment that JOGL made for us
+    drawable.getFBObject(GL_FRONT).detachColorbuffer(gl, 0, true);
+    // Equivalent to calling glBindFramebuffer
+    drawable.getFBObject(GL_FRONT).bind(gl);
+    // Create a color attachment texture to hold our rendered output
+    var colorBufferIds = GLBuffers.newDirectIntBuffer(1);
+    gl.glGenTextures(1, colorBufferIds);
+    gl.glBindTexture(GL_TEXTURE_2D, colorBufferIds.get(0));
+    gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, k_startingWidth, k_startingHeight, 0, GL_RED, GL_UNSIGNED_BYTE, null);
+    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // Attach the texture to the framebuffer
+    gl.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorBufferIds.get(0), 0);
+    // Cleanup
+    gl.glBindTexture(GL_TEXTURE_2D, 0);
+    drawable.getFBObject(GL_FRONT).unbind(gl);
+
+    logger.info("Created an OpenGL context with renderer '" + gl.glGetString(GL_RENDERER) + "', version '" + gl.glGetString(GL.GL_VERSION) + "', and profile '" + profile.toString() + "'");
 
     var fmt = GLBuffers.newDirectIntBuffer(1);
-    gl.glGetIntegerv(GL4ES3.GL_IMPLEMENTATION_COLOR_READ_FORMAT, fmt);
+    gl.glGetIntegerv(GLES3.GL_IMPLEMENTATION_COLOR_READ_FORMAT, fmt);
     var type = GLBuffers.newDirectIntBuffer(1);
-    gl.glGetIntegerv(GL4ES3.GL_IMPLEMENTATION_COLOR_READ_TYPE, type);
+    gl.glGetIntegerv(GLES3.GL_IMPLEMENTATION_COLOR_READ_TYPE, type);
 
     logger.info("GL_IMPLEMENTATION_COLOR_READ_FORMAT: " + fmt.get(0) + ", GL_IMPLEMENTATION_COLOR_READ_TYPE: " + type.get(0));
 
@@ -141,17 +168,17 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glBindAttribLocation(programId, 0, "position");
 
     // Compile and setup our two shaders with our program
-    final int vertexId = createShader(gl, programId, k_vertexShader, GL2ES2.GL_VERTEX_SHADER);
-    final int fragmentId = createShader(gl, programId, k_fragmentShader, GL2ES2.GL_FRAGMENT_SHADER);
+    final int vertexId = createShader(gl, programId, k_vertexShader, GL_VERTEX_SHADER);
+    final int fragmentId = createShader(gl, programId, k_fragmentShader, GL_FRAGMENT_SHADER);
 
     // Link our program together and check for errors
     gl.glLinkProgram(programId);
     IntBuffer status = GLBuffers.newDirectIntBuffer(1);
-    gl.glGetProgramiv(programId, GL2ES2.GL_LINK_STATUS, status);
-    if (status.get(0) == GL2ES2.GL_FALSE) {
+    gl.glGetProgramiv(programId, GL_LINK_STATUS, status);
+    if (status.get(0) == GL_FALSE) {
 
       IntBuffer infoLogLength = GLBuffers.newDirectIntBuffer(1);
-      gl.glGetProgramiv(programId, GL2ES2.GL_INFO_LOG_LENGTH, infoLogLength);
+      gl.glGetProgramiv(programId, GL_INFO_LOG_LENGTH, infoLogLength);
 
       ByteBuffer bufferInfoLog = GLBuffers.newDirectByteBuffer(infoLogLength.get(0));
       gl.glGetProgramInfoLog(programId, infoLogLength.get(0), null, bufferInfoLog);
@@ -174,11 +201,11 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
 
     // Set up our texture
     textureUniformId = gl.glGetUniformLocation(programId, "texture0");
-    texture = new Texture(GL2ES2.GL_TEXTURE_2D);
-    texture.setTexParameteri(gl, GL2ES2.GL_TEXTURE_MIN_FILTER, GL2ES2.GL_LINEAR);
-    texture.setTexParameteri(gl, GL2ES2.GL_TEXTURE_MAG_FILTER, GL2ES2.GL_LINEAR);
-    texture.setTexParameteri(gl, GL2ES2.GL_TEXTURE_WRAP_S, GL2ES2.GL_CLAMP_TO_EDGE);
-    texture.setTexParameteri(gl, GL2ES2.GL_TEXTURE_WRAP_T, GL2ES2.GL_CLAMP_TO_EDGE);
+    texture = new Texture(GL_TEXTURE_2D);
+    texture.setTexParameteri(gl, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    texture.setTexParameteri(gl, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    texture.setTexParameteri(gl, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    texture.setTexParameteri(gl, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     // Set up a uniform to hold image resolution
     resolutionUniformId = gl.glGetUniformLocation(programId, "resolution");
@@ -191,38 +218,41 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glGenBuffers(1, vertexVBOIds);
 
     FloatBuffer vertexBuffer = GLBuffers.newDirectFloatBuffer(k_vertexPositions);
-    gl.glBindBuffer(GL2ES2.GL_ARRAY_BUFFER, vertexVBOIds.get(0));
-    gl.glBufferData(GL2ES2.GL_ARRAY_BUFFER, vertexBuffer.capacity() * Float.BYTES, vertexBuffer, GL2ES2.GL_STATIC_DRAW);
+    gl.glBindBuffer(GL_ARRAY_BUFFER, vertexVBOIds.get(0));
+    gl.glBufferData(GL_ARRAY_BUFFER, vertexBuffer.capacity() * Float.BYTES, vertexBuffer, GL_STATIC_DRAW);
 
     // Set up pixel unpack buffer (a PBO to transfer image data to the GPU)
     if (pboMode != PBOMode.NONE) {
       gl.glGenBuffers(2, unpackPBOIds);
 
-      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(0));
-      gl.glBufferData(GL4ES3.GL_PIXEL_UNPACK_BUFFER, k_startingHeight * k_startingWidth * 3, null, GL4ES3.GL_STREAM_DRAW);
+      gl.glBindBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(0));
+      gl.glBufferData(GLES3.GL_PIXEL_UNPACK_BUFFER, k_startingHeight * k_startingWidth * 3, null, GLES3.GL_STREAM_DRAW);
       if (pboMode == PBOMode.DOUBLE_BUFFERED) {
-        gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(1));
-        gl.glBufferData(GL4ES3.GL_PIXEL_UNPACK_BUFFER, k_startingHeight * k_startingWidth * 3, null, GL4ES3.GL_STREAM_DRAW);
+        gl.glBindBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(1));
+        gl.glBufferData(GLES3.GL_PIXEL_UNPACK_BUFFER, k_startingHeight * k_startingWidth * 3, null, GLES3.GL_STREAM_DRAW);
       }
-      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, 0);
+      gl.glBindBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, 0);
     }
+
+    // Set up pixel pack alignment
+    gl.glPixelStorei(GL_PACK_ALIGNMENT, 1);
 
     // Set up pixel pack buffer (a PBO to transfer the processed image back from the GPU)
     if (pboMode != PBOMode.NONE) {
       gl.glGenBuffers(2, packPBOIds);
 
-      gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(0));
-      gl.glBufferData(GL4ES3.GL_PIXEL_PACK_BUFFER, k_startingHeight * k_startingWidth, null, GL4ES3.GL_STREAM_READ);
+      gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(0));
+      gl.glBufferData(GLES3.GL_PIXEL_PACK_BUFFER, k_startingHeight * k_startingWidth, null, GLES3.GL_STREAM_READ);
       if (pboMode == PBOMode.DOUBLE_BUFFERED) {
-        gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(1));
-        gl.glBufferData(GL4ES3.GL_PIXEL_PACK_BUFFER, k_startingHeight * k_startingWidth, null, GL4ES3.GL_STREAM_READ);
+        gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(1));
+        gl.glBufferData(GLES3.GL_PIXEL_PACK_BUFFER, k_startingHeight * k_startingWidth, null, GLES3.GL_STREAM_READ);
       }
-      gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, 0);
+      gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, 0);
     }
 
   }
 
-  private static int createShader(GL2ES2 gl, int programId, String glslCode, int shaderType) {
+  private static int createShader(GLES2 gl, int programId, String glslCode, int shaderType) {
     int shaderId = gl.glCreateShader(shaderType);
     if (shaderId == 0)
       throw new RuntimeException("Shader ID is zero");
@@ -232,10 +262,10 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glCompileShader(shaderId);
 
     IntBuffer intBuffer = IntBuffer.allocate(1);
-    gl.glGetShaderiv(shaderId, GL2ES2.GL_COMPILE_STATUS, intBuffer);
+    gl.glGetShaderiv(shaderId, GL_COMPILE_STATUS, intBuffer);
 
     if (intBuffer.get(0) != 1) {
-      gl.glGetShaderiv(shaderId, GL2ES2.GL_INFO_LOG_LENGTH, intBuffer);
+      gl.glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, intBuffer);
       int size = intBuffer.get(0);
       if (size > 0) {
         ByteBuffer byteBuffer = ByteBuffer.allocate(size);
@@ -267,12 +297,12 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
       outputMat = new Mat(k_startingHeight, k_startingWidth, CvType.CV_8UC1);
 
       if (pboMode != PBOMode.NONE) {
-        gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(0));
-        gl.glBufferData(GL4ES3.GL_PIXEL_PACK_BUFFER, in.width() * in.height(), null, GL4ES3.GL_STREAM_READ);
+        gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(0));
+        gl.glBufferData(GLES3.GL_PIXEL_PACK_BUFFER, in.width() * in.height(), null, GLES3.GL_STREAM_READ);
 
         if (pboMode == PBOMode.DOUBLE_BUFFERED) {
-          gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(1));
-          gl.glBufferData(GL4ES3.GL_PIXEL_PACK_BUFFER, in.width() * in.height(), null, GL4ES3.GL_STREAM_READ);
+          gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(1));
+          gl.glBufferData(GLES3.GL_PIXEL_PACK_BUFFER, in.width() * in.height(), null, GLES3.GL_STREAM_READ);
         }
       }
     }
@@ -283,12 +313,12 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     }
 
     // Reset the fullscreen quad
-    gl.glBindBuffer(GL2ES2.GL_ARRAY_BUFFER, vertexVBOIds.get(0));
+    gl.glBindBuffer(GL_ARRAY_BUFFER, vertexVBOIds.get(0));
     gl.glEnableVertexAttribArray(k_positionVertexAttribute);
-    gl.glVertexAttribPointer(0, 2, GL2ES2.GL_FLOAT, false, 0, 0);
+    gl.glVertexAttribPointer(0, 2, GL_FLOAT, false, 0, 0);
 
     // Load and bind our image as a 2D texture
-    gl.glActiveTexture(GL2ES2.GL_TEXTURE0);
+    gl.glActiveTexture(GL_TEXTURE0);
     texture.enable(gl);
     texture.bind(gl);
 
@@ -297,27 +327,27 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     if (pboMode == PBOMode.NONE || true) {
       ByteBuffer buf = ByteBuffer.wrap(inputBytes);
       // (We're actually taking in BGR even though this says RGB; it's much easier and faster to switch it around in the fragment shader)
-      texture.updateImage(gl, new TextureData(profile, GL2ES2.GL_RGB8, in.width(), in.height(), 0, GL2ES2.GL_RGB, GL2ES2.GL_UNSIGNED_BYTE, false, false, false, buf, null));
+      texture.updateImage(gl, new TextureData(profile, GL_RGB8, in.width(), in.height(), 0, GL_RGB, GL_UNSIGNED_BYTE, false, false, false, buf, null));
     } else {
       // Bind the PBO to the texture
-      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(unpackIndex));
+      gl.glBindBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(unpackIndex));
 
       // Copy pixels from the PBO to the texture object
-      gl.glTexSubImage2D(GL4ES3.GL_TEXTURE_2D, 0, 0, 0, in.width(), in.height(), GL4ES3.GL_RGB8, GL4ES3.GL_UNSIGNED_BYTE, 0);
+      gl.glTexSubImage2D(GLES3.GL_TEXTURE_2D, 0, 0, 0, in.width(), in.height(), GLES3.GL_RGB8, GLES3.GL_UNSIGNED_BYTE, 0);
 
       // Bind (potentially) another PBO to update the texture source
-      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(unpackNextIndex));
+      gl.glBindBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, unpackPBOIds.get(unpackNextIndex));
 
       // This call with a nullptr for the data arg tells OpenGL *not* to wait to be in sync with the GPU
       // This causes the previous data in the PBO to be discarded
-      gl.glBufferData(GL4ES3.GL_PIXEL_UNPACK_BUFFER, in.width() * in.height() * 3, null, GL4ES3.GL_STREAM_DRAW);
+      gl.glBufferData(GLES3.GL_PIXEL_UNPACK_BUFFER, in.width() * in.height() * 3, null, GLES3.GL_STREAM_DRAW);
 
       // Map the a buffer of GPU memory into a place that's accessible by us
-      var buf = gl.glMapBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, GL4ES3.GL_WRITE_ONLY);
+      var buf = gl.glMapBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, GLES3.GL_WRITE_ONLY);
       buf.put(inputBytes);
 
-      gl.glUnmapBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER);
-      gl.glBindBuffer(GL4ES3.GL_PIXEL_UNPACK_BUFFER, 0);
+      gl.glUnmapBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER);
+      gl.glBindBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, 0);
     }
 
     // Set up a uniform holding our image as a texture
@@ -333,7 +363,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     gl.glUniform3f(upperUniformId, (float) upr[0], (float) upr[1], (float) upr[2]);
 
     // Draw the fullscreen quad
-    gl.glDrawArrays(GL2ES2.GL_TRIANGLE_STRIP, 0, k_vertexPositions.length);
+    gl.glDrawArrays(GL_TRIANGLE_STRIP, 0, k_vertexPositions.length);
 
     // Cleanup
     texture.disable(gl);
@@ -343,44 +373,44 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     if (pboMode == PBOMode.NONE) {
       return saveMatNoPBO(gl, in.width(), in.height());
     } else {
-      return saveMatPBO(new DebugGLES3((GLES3) gl), in.width(), in.height(), pboMode == PBOMode.DOUBLE_BUFFERED);
+      return saveMatPBO((GLES3) gl, in.width(), in.height(), pboMode == PBOMode.DOUBLE_BUFFERED);
     }
   }
 
-  private static Mat saveMatNoPBO(GL2ES2 gl, int width, int height) {
+  private static Mat saveMatNoPBO(GLES2 gl, int width, int height) {
     ByteBuffer buffer = GLBuffers.newDirectByteBuffer(width * height);
     // We use GL_RED to get things in a single-channel format
     // Note that which pixel format you use is *very* important to performance
     // E.g. GL_LUMINANCE is super slow in this case
-    gl.glReadPixels(0, 0, width, height, GL2ES2.GL_RED, GL2ES2.GL_UNSIGNED_BYTE, buffer);
+    gl.glReadPixels(0, 0, width, height, GL_RED, GL_UNSIGNED_BYTE, buffer);
 
     return new Mat(height, width, CvType.CV_8UC1, buffer);
   }
 
-  private Mat saveMatPBO(GL4ES3 gl, int width, int height, boolean doubleBuffered) {
+  private Mat saveMatPBO(GLES3 gl, int width, int height, boolean doubleBuffered) {
     if (doubleBuffered) {
       packIndex = (packIndex + 1) % 2;
       packNextIndex = (packIndex + 1) % 2;
     }
 
     // Set the target framebuffer to read
-//    gl.glReadBuffer(GL4ES3.GL_FRONT);
+//    gl.glReadBuffer(GLES3.GL_FRONT);
 
     // Read pixels from the framebuffer to the PBO
-    gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packIndex));
+    gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packIndex));
     // We use GL_RED to get things in a single-channel format
     // Note that which pixel format you use is *very* important to performance
     // E.g. GL_LUMINANCE is super slow in this case
     // TODO: GL_RED + GL_UNSIGNED_BYTE may not be supported on most OpenGL ES 3.0 implementations
-    gl.glReadPixels(0, 0, width, height, GL4ES3.GL_RED, GL4ES3.GL_UNSIGNED_BYTE, 0);
+    gl.glReadPixels(0, 0, width, height, GLES3.GL_RED, GLES3.GL_UNSIGNED_BYTE, 0);
 
     // Map the PBO into the CPU's memory
-    gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packNextIndex));
-    var buf = gl.glMapBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, GL4ES3.GL_READ_ONLY);
+    gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, packPBOIds.get(packNextIndex));
+    var buf = gl.glMapBuffer(GLES3.GL_PIXEL_PACK_BUFFER, GLES3.GL_READ_ONLY);
     buf.get(outputBytes);
     outputMat.put(0, 0, outputBytes);
-    gl.glUnmapBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER);
-    gl.glBindBuffer(GL4ES3.GL_PIXEL_PACK_BUFFER, 0);
+    gl.glUnmapBuffer(GLES3.GL_PIXEL_PACK_BUFFER);
+    gl.glBindBuffer(GLES3.GL_PIXEL_PACK_BUFFER, 0);
 
     return outputMat;
   }
