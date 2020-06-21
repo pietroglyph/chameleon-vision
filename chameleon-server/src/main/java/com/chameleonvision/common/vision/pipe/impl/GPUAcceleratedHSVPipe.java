@@ -63,7 +63,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "  gl_FragColor = inRange(rgb2hsv(col)) ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 0.0, 0.0);",
           "}"
   );
-  private static final int k_startingWidth = 1280, k_startingHeight = 720;
+  private static final int k_startingWidth = 1920, k_startingHeight = 1080;
   private static final float[] k_vertexPositions = {
         // Set up a quad that covers the screen
         -1f, +1f,
@@ -146,18 +146,30 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
     drawable.getFBObject(GL_FRONT).detachColorbuffer(gl, 0, true);
     // Equivalent to calling glBindFramebuffer
     drawable.getFBObject(GL_FRONT).bind(gl);
-    // Create a color attachment texture to hold our rendered output
-    var colorBufferIds = GLBuffers.newDirectIntBuffer(1);
-    gl.glGenTextures(1, colorBufferIds);
-    gl.glBindTexture(GL_TEXTURE_2D, colorBufferIds.get(0));
-    gl.glTexImage2D(GL_TEXTURE_2D, 0, outputFormat == GL_RED ? GL_R8 : GL_ALPHA8, k_startingWidth, k_startingHeight, 0, outputFormat, GL_UNSIGNED_BYTE, null);
-    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    // Attach the texture to the framebuffer
-    gl.glBindTexture(GL_TEXTURE_2D, 0);
-    gl.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorBufferIds.get(0), 0);
-    // Cleanup
-    gl.glBindTexture(GL_TEXTURE_2D, 0);
+    if (true) {
+      // Create a color attachment texture to hold our rendered output
+      var colorBufferIds = GLBuffers.newDirectIntBuffer(1);
+      gl.glGenTextures(1, colorBufferIds);
+      gl.glBindTexture(GL_TEXTURE_2D, colorBufferIds.get(0));
+      gl.glTexImage2D(GL_TEXTURE_2D, 0, outputFormat == GL_RED ? GL_R8 : GL_ALPHA8, k_startingWidth, k_startingHeight, 0, outputFormat, GL_UNSIGNED_BYTE, null);
+      gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      // Attach the texture to the framebuffer
+      gl.glBindTexture(GL_TEXTURE_2D, 0);
+      gl.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorBufferIds.get(0), 0);
+      // Cleanup
+      gl.glBindTexture(GL_TEXTURE_2D, 0);
+    } else {
+      // Create a color attachment texture to hold our rendered output
+      var renderBufferIds = GLBuffers.newDirectIntBuffer(1);
+      gl.glGenRenderbuffers(1, renderBufferIds);
+      gl.glBindRenderbuffer(GL_RENDERBUFFER, renderBufferIds.get(0));
+      gl.glRenderbufferStorage(GL_RENDERBUFFER, outputFormat == GL_RED ? GL_R8 : GL_ALPHA8, k_startingWidth, k_startingHeight);
+      // Attach the texture to the framebuffer
+      gl.glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderBufferIds.get(0));
+      // Cleanup
+      gl.glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    }
     drawable.getFBObject(GL_FRONT).unbind(gl);
 
     // Check that the FBO is attached
@@ -338,7 +350,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
 
     // Load our image into the texture
     in.get(0, 0, inputBytes);
-    if (pboMode == PBOMode.NONE || true) {
+    if (pboMode == PBOMode.NONE) {
       ByteBuffer buf = ByteBuffer.wrap(inputBytes);
       // (We're actually taking in BGR even though this says RGB; it's much easier and faster to switch it around in the fragment shader)
       texture.updateImage(gl, new TextureData(profile, GL_RGB8, in.width(), in.height(), 0, GL_RGB, GL_UNSIGNED_BYTE, false, false, false, buf, null));
@@ -357,7 +369,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
       gl.glBufferData(GLES3.GL_PIXEL_UNPACK_BUFFER, in.width() * in.height() * 3, null, GLES3.GL_STREAM_DRAW);
 
       // Map the a buffer of GPU memory into a place that's accessible by us
-      var buf = gl.glMapBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER, GLES3.GL_WRITE_ONLY);
+      var buf = gl.glMapBufferRange(GLES3.GL_PIXEL_UNPACK_BUFFER, 0, in.width() * in.height() * 3, GLES3.GL_MAP_WRITE_BIT);
       buf.put(inputBytes);
 
       gl.glUnmapBuffer(GLES3.GL_PIXEL_UNPACK_BUFFER);

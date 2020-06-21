@@ -108,8 +108,8 @@ public class BenchmarkTest {
     @Test
     public void ReflectiveGPU1920x1440Benchmark() {
         // Uncomment to run on a single frame
-        if (true) {
-            var pipe = new GPUAcceleratedHSVPipe(GPUAcceleratedHSVPipe.PBOMode.NONE);
+        if (false) {
+            var pipe = new GPUAcceleratedHSVPipe(GPUAcceleratedHSVPipe.PBOMode.SINGLE_BUFFERED);
             pipe.setParams(new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))); // new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0))
             var path = TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p);
             var mat = pipe.apply(Imgcodecs.imread(path.toString())).result;
@@ -130,7 +130,7 @@ public class BenchmarkTest {
 
             var frameProvider =
                     new FileFrameProvider(
-                            TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p),
+                            TestUtils.getWPIImagePath(TestUtils.WPI2019Image.kCargoStraightDark72in_HighRes),
                             TestUtils.WPI2019Image.FOV);
 
             frameProvider.setImageReloading(true);
