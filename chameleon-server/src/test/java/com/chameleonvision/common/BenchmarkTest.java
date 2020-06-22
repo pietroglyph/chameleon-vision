@@ -8,15 +8,21 @@ import com.chameleonvision.common.vision.frame.provider.FileFrameProvider;
 import com.chameleonvision.common.vision.opencv.CVMat;
 import com.chameleonvision.common.vision.opencv.ContourGroupingMode;
 import com.chameleonvision.common.vision.opencv.ContourIntersectionDirection;
+import com.chameleonvision.common.vision.pipe.CVPipe;
 import com.chameleonvision.common.vision.pipe.impl.GPUAcceleratedHSVPipe;
 import com.chameleonvision.common.vision.pipe.impl.HSVPipe;
 import com.chameleonvision.common.vision.pipeline.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
 import org.opencv.core.Scalar;
 import org.opencv.imgcodecs.Imgcodecs;
 
@@ -130,13 +136,77 @@ public class BenchmarkTest {
 
             var frameProvider =
                     new FileFrameProvider(
-                            TestUtils.getWPIImagePath(TestUtils.WPI2019Image.kCargoStraightDark72in_HighRes),
+                            TestUtils.getWPIImagePath(TestUtils.WPI2020Image.kBlueGoal_084in_Center_720p),
                             TestUtils.WPI2019Image.FOV);
 
             frameProvider.setImageReloading(true);
 
             benchmarkPipeline(frameProvider, pipeline, 20);
         }
+    }
+
+    @Test
+    public void benchBoth() {
+        var params = new HSVPipe.HSVParams(new Scalar(0.4, 0.8, 0.8), new Scalar(0.85, 1.0, 1.0));
+
+        var cpu = new HSVPipe();
+        cpu.setParams(params);
+        benchmarkPipe(cpu, () -> new Mat(1280, 720, CvType.CV_8UC3), (Mat it) -> it.release(), 5);
+
+        var gpu = new GPUAcceleratedHSVPipe(GPUAcceleratedHSVPipe.PBOMode.SINGLE_BUFFERED);
+        gpu.setParams(params);
+        benchmarkPipe(gpu, () -> new Mat(1280, 720, CvType.CV_8UC3), (Mat it) -> it.release(), 5);
+    }
+
+    private static <I, C, P extends CVPipe<I, ?, C>> void benchmarkPipe(
+            P pipe, Supplier<I> inputSupplier, Consumer<I> inputReleaser, int secondsToRun
+    ) {
+        CVMat.enablePrint(false);
+        // warmup for 5 loops.
+        System.out.println("Warming up for 5 loops...");
+        for (int i = 0; i < 5; i++) {
+            var in = inputSupplier.get();
+            pipe.apply(in);
+            inputReleaser.accept(in);
+        }
+
+        final List<Double> processingTimes = new ArrayList<>();
+
+        // begin benchmark
+        System.out.println("Beginning " + secondsToRun + " second benchmark");
+        var benchmarkStartMillis = System.currentTimeMillis();
+        do {
+            var in = inputSupplier.get();
+            long startTime = System.currentTimeMillis();
+            pipe.apply(in);
+            long endTime = System.currentTimeMillis();
+            processingTimes.add((double) (endTime - startTime));
+            inputReleaser.accept(in);
+        } while (System.currentTimeMillis() - benchmarkStartMillis < secondsToRun * 1000);
+        System.out.println("Benchmark complete.");
+
+        var processingMin = Collections.min(processingTimes);
+        var processingMean = NumberListUtils.mean(processingTimes);
+        var processingMax = Collections.max(processingTimes);
+
+        String processingResult =
+                "Processing times - "
+                        + "Min: "
+                        + MathUtils.roundTo(processingMin, 3)
+                        + "ms ("
+                        + MathUtils.roundTo(1000d / processingMin, 3)
+                        + " FPS), "
+                        + "Mean: "
+                        + MathUtils.roundTo(processingMean, 3)
+                        + "ms ("
+                        + MathUtils.roundTo(1000d / processingMean, 3)
+                        + " FPS), "
+                        + "Max: "
+                        + MathUtils.roundTo(processingMax, 3)
+                        + "ms ("
+                        + MathUtils.roundTo(1000d / processingMax, 3)
+                        + " FPS)";
+        System.out.println(processingResult);
     }
 
     private static <P extends CVPipeline> void benchmarkPipeline(

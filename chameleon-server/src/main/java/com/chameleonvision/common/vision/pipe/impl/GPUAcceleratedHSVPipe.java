@@ -63,7 +63,7 @@ public class GPUAcceleratedHSVPipe extends CVPipe<Mat, Mat, HSVPipe.HSVParams> {
           "  gl_FragColor = inRange(rgb2hsv(col)) ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 0.0, 0.0);",
           "}"
   );
-  private static final int k_startingWidth = 1920, k_startingHeight = 1080;
+  private static final int k_startingWidth = 1280, k_startingHeight = 720;
   private static final float[] k_vertexPositions = {
         // Set up a quad that covers the screen
         -1f, +1f,
