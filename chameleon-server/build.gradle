@@ -17,7 +17,7 @@ sourceCompatibility = 11
 repositories {
     mavenCentral()
     maven {
-        url = "file:///home/declan/work/src/github.com/pietroglyph/chameleon-vision/chameleon-server/repo"
+        url = "https://maven.0x778.tk"
     }
     maven {
         url = 'https://frcmaven.wpi.edu:443/artifactory/release'
